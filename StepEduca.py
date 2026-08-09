@@ -150,7 +150,6 @@ st.markdown("""
     /* ==============================================================
        CSS MÁGICO PARA A COLUNA STICKY E ANIMAÇÕES (RESPIRAR + QUICAR)
        ============================================================== */
-    /* Captura a coluna mãe que contém a classe painel-letras-sticky */
     div[data-testid="column"]:has(.painel-letras-sticky) {
         position: -webkit-sticky !important;
         position: sticky !important;
@@ -209,19 +208,14 @@ def inicializar_firebase():
     if not FIREBASE_DISPONIVEL:
         return None, "Biblioteca firebase_admin não instalada."
     
-    json_credencial = "credenciais_firebase.json"
-    
-    if not os.path.exists(json_credencial):
-        arquivos = [f for f in os.listdir('.') if f.endswith('.json') and ('firebase' in f.lower() or 'stepeduca' in f.lower())]
-        if arquivos:
-            json_credencial = arquivos[0]
-        else:
-            return None, f"Arquivo JSON de credenciais não encontrado na pasta {os.getcwd()}"
-
     try:
         if not firebase_admin._apps:
-            cred = credentials.Certificate(json_credencial)
-            firebase_admin.initialize_app(cred)
+            if "firebase" in st.secrets:
+                cred_dict = dict(st.secrets["firebase"])
+                cred = credentials.Certificate(cred_dict)
+                firebase_admin.initialize_app(cred)
+            else:
+                return None, "Configurações do Firebase não encontradas no st.secrets."
         return firestore.client(), None
     except Exception as e:
         return None, str(e)
@@ -232,8 +226,11 @@ def gerar_codigo_aula():
     return f"STP-{''.join(random.choices(string.ascii_uppercase + string.digits, k=4))}"
 
 def carregar_configuracoes_usuario(usuario):
+    # FORÇA O USO DA CHAVE SEGURA DO ST.SECRETS
+    api_key_segura = st.secrets.get("GEMINI_API_KEY", "")
+    
     configs = {
-        "api_key": "AIzaSyBpfGI8Z75Qe6Mtnd5yjmJNGaEUJ6Xg6B8",
+        "api_key": api_key_segura,
         "nivel_dificuldade": "Médio / Intermediário",
         "qtd_slides": 6,
         "qtd_questoes": 8,
@@ -245,7 +242,7 @@ def carregar_configuracoes_usuario(usuario):
             doc = db.collection('configuracoes_professores').document(usuario.lower()).get()
             if doc.exists:
                 dados = doc.to_dict()
-                configs["api_key"] = dados.get("api_key", configs["api_key"])
+                configs["api_key"] = api_key_segura
                 configs["nivel_dificuldade"] = dados.get("nivel_dificuldade", configs["nivel_dificuldade"])
                 configs["qtd_slides"] = dados.get("qtd_slides", configs["qtd_slides"])
                 configs["qtd_questoes"] = dados.get("qtd_questoes", configs["qtd_questoes"])
@@ -260,7 +257,7 @@ def salvar_configuracoes_usuario(usuario, api_key, nivel_dificuldade, qtd_slides
         try:
             db.collection('configuracoes_professores').document(usuario.lower()).set({
                 "usuario": usuario,
-                "api_key": api_key,
+                "api_key": st.secrets.get("GEMINI_API_KEY", api_key),
                 "nivel_dificuldade": nivel_dificuldade,
                 "qtd_slides": qtd_slides,
                 "qtd_questoes": qtd_questoes,
@@ -568,7 +565,7 @@ def tela_aluno_mobile(codigo_aula):
                         if not nome_aluno:
                             st.warning("Preencha seu nome completo para confirmar o envio.")
                         else:
-                            api_k = dados.get("api_key", "AIzaSyBpfGI8Z75Qe6Mtnd5yjmJNGaEUJ6Xg6B8")
+                            api_k = st.secrets.get("GEMINI_API_KEY", dados.get("api_key", ""))
                             resultado = avaliar_submissao_aluno(pacote, respostas, api_k)
                             
                             submissao = {
@@ -595,7 +592,6 @@ def tela_aluno_mobile(codigo_aula):
 
     except Exception as e:
         st.error(f"Erro ao carregar a aula no celular: {e}")
-
 
 # --- TELA DE LOGIN DOCENTE ---
 def tela_login():
@@ -634,7 +630,8 @@ def tela_login():
 
             if btn_entrar:
                 if usuario.strip():
-                    if usuario.strip() == "Stepherson_adm" and senha == "SXdcfvgb01!":
+                    senha_admin_secreta = st.secrets.get("ADMIN_PASSWORD", "SXdcfvgb01!")
+                    if usuario.strip() == "Stepherson_adm" and senha == senha_admin_secreta:
                         st.session_state['is_admin'] = True
                     else:
                         st.session_state['is_admin'] = False
@@ -847,7 +844,7 @@ def tela_fabrica_aulas():
     usuario_atual = st.session_state.get('user_name', '')
     is_admin = st.session_state.get('is_admin', False)
     
-    api_key_salva = st.session_state.get('user_api_key', "AIzaSyBpfGI8Z75Qe6Mtnd5yjmJNGaEUJ6Xg6B8")
+    api_key_salva = st.session_state.get('user_api_key', st.secrets.get("GEMINI_API_KEY", ""))
     nivel_salvo = st.session_state.get('user_nivel_dificuldade', "Médio / Intermediário")
     qtd_slides_salva = st.session_state.get('user_qtd_slides', 6)
     qtd_questoes_salva = st.session_state.get('user_qtd_questoes', 8)
@@ -921,6 +918,9 @@ def tela_fabrica_aulas():
         gerar = st.button("✨ Gerar Pacote Completo e Link Mobile (IA)", type="primary", use_container_width=True)
         
         if gerar:
+            # GARANTE QUE USA SEMPRE A CHAVE DO SECRETS OU DO ADMIN
+            api_key = st.secrets.get("GEMINI_API_KEY", api_key)
+            
             if not api_key:
                 st.error("⚠️ Insira a chave da API.")
             elif not tema_livre:
@@ -1099,7 +1099,7 @@ def tela_fabrica_aulas():
                 
             with aba_slides:
                 st.info("Apresentação em HTML corporativo para projeção:")
-                html_completo_slides = f"""<!DOCTYPE html><html lang='pt-BR'><head><meta charset='UTF-8'><title>{pacote_aula['titulo']}</title><script src='https://cdn.tailwindcss.com'></script></head><body class='bg-slate-900 text-white p-10'><h1 class='text-4xl font-bold mb-8 text-blue-400'>Apresentação: {pacote_aula['titulo']}</h1><div class='space-y-12'>"""
+                html_completo_slides = f"<!DOCTYPE html><html lang='pt-BR'><head><meta charset='UTF-8'><title>{pacote_aula['titulo']}</title><script src='https://cdn.tailwindcss.com'></script></head><body class='bg-slate-900 text-white p-10'><h1 class='text-4xl font-bold mb-8 text-blue-400'>Apresentação: {pacote_aula['titulo']}</h1><div class='space-y-12'>"
                 for s in pacote_aula.get('slides', []):
                     html_completo_slides += f"<div class='bg-slate-800 p-8 rounded-2xl shadow-xl border border-slate-700'><h2 class='text-2xl font-bold text-amber-400 mb-4'>Slide {s['numero']}: {s['titulo_slide']}</h2>{s['html_visual']}<ul class='mt-4 list-disc pl-5 space-y-2'>"
                     for t in s['topicos']:
@@ -1240,7 +1240,7 @@ def tela_fabrica_kids():
     st.markdown("## 🧸 Fábrica Kids (Letramento & Fundamental I)")
     st.write("Crie contações de histórias com voz, ilustrações geradas por IA e atividades pontilhadas para imprimir!")
     
-    api_key = st.session_state.get('user_api_key', "AIzaSyBpfGI8Z75Qe6Mtnd5yjmJNGaEUJ6Xg6B8")
+    api_key = st.secrets.get("GEMINI_API_KEY", st.session_state.get('user_api_key', ""))
     escola_unidade_salva = st.session_state.get('user_escola_unidade', "Escola Municipal")
 
     if st.session_state.get('is_admin', False):
@@ -1259,7 +1259,6 @@ def tela_fabrica_kids():
         
         btn_gerar_kids = st.button("🌟 Criar Magia (Gerar Aula Kids)", type="primary", use_container_width=True)
         
-        # Espaço reservado para o painel de loading animado
         loading_placeholder = st.empty()
         
         if btn_gerar_kids:
@@ -1270,7 +1269,6 @@ def tela_fabrica_kids():
             elif not GOOGLE_GENAI_DISPONIVEL:
                 st.error("⚠️ Biblioteca 'google-genai' não instalada.")
             else:
-                # PASSO 1: Loading Pedagógico Lúdico (Tempo Estendido para 12s)
                 loading_placeholder.markdown("""
                 <div style="text-align: center; padding: 50px; background-color: #030712; border-radius: 20px; border: 4px dashed #38bdf8; margin-top: 20px; min-height: 450px; display: flex; flex-direction: column; justify-content: center;">
                     <h2 style="color: #f8fafc; font-size: 38px; margin-bottom: 40px; text-shadow: 2px 2px 5px rgba(0,0,0,0.5);">✨ Hora da Mágica! Vamos ler as vogais bem alto?</h2>
@@ -1287,10 +1285,8 @@ def tela_fabrica_kids():
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # Pausa estratégica para a professora interagir com as crianças
                 time.sleep(12)
                 
-                # PASSO 2: Chamada da IA com Blindagem Absoluta nas Imagens
                 with st.spinner("🎩 Escrevendo a história e pintando as imagens mágicas..."):
                     try:
                         client = genai.Client(api_key=api_key)
@@ -1327,15 +1323,12 @@ def tela_fabrica_kids():
                             config=types.GenerateContentConfig(response_mime_type="application/json")
                         )
                         
-                        try:
-                            pacote_kids = json.loads(response.text.strip())
-                            st.session_state['ultimo_pacote_kids'] = pacote_kids
-                            st.session_state['escola_kids'] = escola
-                            st.session_state['idade_kids'] = idade_alvo
-                            st.session_state['flash_msg'] = "🌟 Aula Kids gerada com sucesso!"
-                            st.rerun()
-                        except json.JSONDecodeError:
-                            st.error("⚠️ A IA não retornou um formato válido. Tente novamente.")
+                        pacote_kids = json.loads(response.text.strip())
+                        st.session_state['ultimo_pacote_kids'] = pacote_kids
+                        st.session_state['escola_kids'] = escola
+                        st.session_state['idade_kids'] = idade_alvo
+                        st.session_state['flash_msg'] = "🌟 Aula Kids gerada com sucesso!"
+                        st.rerun()
                     except Exception as e:
                         st.error(f"Erro na IA: {e}")
                     finally:
@@ -1353,7 +1346,6 @@ def tela_fabrica_kids():
             
             historia_completa_texto = " ".join([h.get('texto', '') for h in pacote.get('historia', [])])
             
-            # Botão de Áudio com atraso de ativação via JavaScript
             audio_html = f"""
                 <div style="text-align: center; margin-bottom: 25px;">
                     <button id="btnAudio" onclick="lerHistoria()" disabled style="padding: 15px 35px; font-size: 24px; font-weight: bold; background-color: #475569; color: #94a3b8; border: none; border-radius: 12px; cursor: not-allowed; box-shadow: 0 4px 6px rgba(0,0,0,0.5); transition: 0.5s;">
@@ -1383,17 +1375,14 @@ def tela_fabrica_kids():
             """
             components.html(audio_html, height=85)
             
-            # Tela Dividida: Contação + Ancoragem Visual
             col_historia, col_letras = st.columns([2, 1], gap="large")
             
             with col_historia:
                 for i, h in enumerate(pacote.get('historia', [])):
                     with st.container(border=True):
-                        # Ultra Filtro de Blindagem para Imagens
                         texto_bruto = h.get('imagem_prompt', 'cute cartoon')
-                        # Remove tudo que não for letra ou espaço
                         texto_limpo = re.sub(r'[^a-zA-Z\s]', '', texto_bruto).strip() 
-                        palavras = texto_limpo.split()[:3] # Força no máximo 3 palavras limpas
+                        palavras = texto_limpo.split()[:3]
                         texto_curto = " ".join(palavras) + " 3d cartoon"
                         prompt_img = urllib.parse.quote(texto_curto)
                         
@@ -1412,7 +1401,6 @@ def tela_fabrica_kids():
                     cor = paleta_cores[idx % len(paleta_cores)]
                     html_letras_grandes += f"<span style='color: {cor}; margin: 0 10px; display: inline-block;'>{letra}</span>"
                 
-                # O painel renderizado via HTML com a classe para ser pego pelo CSS sticky lá em cima
                 st.markdown(f"""
                     <div class="painel-letras-sticky">
                         <h3 style='color: #cbd5e1; margin-bottom: 30px; font-size: 26px;'>Letras em Destaque:</h3>
@@ -1462,7 +1450,6 @@ def tela_fabrica_kids():
                 </div>
             </div>
 
-            <!-- Botão de impressão com lógica de Nova Janela Otimizada (Bypass do travamento) -->
             <script>
             function imprimirNovaJanela() {{
                 let conteudo = document.getElementById('area-imprimivel').innerHTML;
@@ -1486,10 +1473,7 @@ def tela_fabrica_kids():
                     </html>
                 `);
                 win.document.close();
-                
-                setTimeout(() => {{
-                    win.print();
-                }}, 1000);
+                setTimeout(() => {{ win.print(); }}, 1000);
             }}
             </script>
             
